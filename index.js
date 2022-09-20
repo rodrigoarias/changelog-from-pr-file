@@ -69,7 +69,7 @@ const createOutputFromChanges = () => {
 
 const addSection = (output, changes, title) => {
   if (!changes.length) {
-    return;
+    return output;
   }
   output += title;
   output += '\n';
