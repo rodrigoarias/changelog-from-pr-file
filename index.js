@@ -2,10 +2,6 @@ const core = require('@actions/core')
 const github = require('@actions/github')
 var output
 
-var patchChanges = 0
-var minorChanges = 0
-var majorChanges = 0
-
 var patchVersion = 0
 var minorVersion = 0
 var majorVersion = 0
@@ -46,9 +42,6 @@ const main = async (workspace) => {
   const changeFiles = await findFile(octokit, owner, repo, '/changes');
 
   await processAllFiles(changeFiles, octokit, owner, repo, '/changes');
-  majorVersion += majorChanges;
-  minorVersion += minorChanges;
-  patchVersion += patchChanges;
 
   createOutputFromChanges();
   console.log(`${output}`)
@@ -121,22 +114,23 @@ const processTypeOfChange = (pr) => {
 
   case changeMessage.startsWith(featPrefix):
     processChange(pr, features, featPrefix);
-    minorChanges++;
+    patchVersion = 0;
+    minorVersion++;
     break;
     
   case changeMessage.startsWith(refactorPrefix):
     processChange(pr, fixes, refactorPrefix);
-    patchChanges++;
+    patchVersion++;
     break;
 
   case changeMessage.startsWith(fixPrefix):
     processChange(pr, fixes, fixPrefix);
-    patchChanges++;
+    patchVersion++;
     break;
 
   default:
     processChange(pr, fixes, '');
-    patchChanges++;
+    patchVersion++;
     break;
   }
 }
