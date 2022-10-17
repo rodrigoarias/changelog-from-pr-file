@@ -19,6 +19,9 @@ const features = []
 const fixes = []
 const others = []
 
+//const teams = ['example']
+const teams = []
+const defaultTeam = 'Others'
 
 
 const main = async (workspace) => {
@@ -52,25 +55,37 @@ const main = async (workspace) => {
 const createOutputFromChanges = () => {
   output = `## v ${majorVersion}.${minorVersion}.${patchVersion}`
   output += "\n"
-
   output = addSection(output, features, '### 🚀 Features');
   output = addSection(output, fixes, '### 🐛 Bugs');
   output = addSection(output, others, '### 📝 Others');
   return output;
-
 }
 
 const addSection = (output, changes, title) => {
-  if (!changes.length) {
+  if (Object.entries(changes).length === 0) {
     return output;
   }
+
   output += title;
   output += '\n';
-  for (const log of changes) {
-    output += log;
+
+  for (const [teamName,items] of Object.entries(changes)) {
+    output = addSubsection(output, teamName, items);
+  }
+
+  return output;
+}
+
+const addSubsection = (output, teamName, items) => {
+  if (teams.length > 0) {
+    output += '##### ' + teamName + '\n';  
+  }
+  
+  for (const log of items) {
+    output += '- ' + log.trim();
     output += '\n';
   }
-  return output;
+  return output; 
 }
 
 const processAllFiles = async (files, octokit, organization, repo, fileName) => {
@@ -89,9 +104,15 @@ const lookForPRFile = async(octokit, organization, repo, fileName) => {
     const buff = Buffer.from(file.content, 'base64');
     const content = buff.toString('ascii');
     const pr = JSON.parse(content);
-
     
     processTypeOfChange(pr);
+}
+
+const teamLabelIncluded = (pr) => {
+  if (pr.labels.length > 0) {
+    return pr.labels.map(label => label.name).find(labelName => teams.includes(labelName))
+  }
+  return false;
 }
 
 const processTypeOfChange = (pr) => {
@@ -138,7 +159,14 @@ const processTypeOfChange = (pr) => {
 const processChange = (pr, sameLevelChanges, prefix) => {
   var line = pr.title.replace(prefix, '')
   line += " " + "[PR-" + pr.number + "](" + pr.url + ")";
-  sameLevelChanges.push(line);
+  var team = teamLabelIncluded(pr);
+  team = team ? team : defaultTeam;
+
+  if (!sameLevelChanges[team]) {
+    sameLevelChanges[team] = []
+  }
+
+  sameLevelChanges[team].push(line);
 }
 
 const findFile = async(octokit, organization, repo, fileName, branch) => {
