@@ -31,7 +31,7 @@ const main = async (workspace) => {
 	console.log(`input ${labelTeams}`);
 
 	try {
-		teams = JSON.parse(as);
+		teams = JSON.parse(labelTeams);
 	} catch (e) {
 		console.log(`Unable to parse input. error: ${e}`);
 		teams = [];
