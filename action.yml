@@ -8,6 +8,9 @@ inputs:
     description: 'The name of the current version, before changes'
     required: false
     default: '0.0.0'
+  label-teams:
+    description: 'A list of label names that will be used as teams in the changelog'
+    required: false
 outputs:
   changelog:
     description: 'The generated changelog'
