@@ -28,6 +28,7 @@ const main = async (workspace) => {
   const octokit = github.getOctokit(myToken);
   const versionName = core.getInput('current-version');
   const labelTeams = core.getInput('label-teams');
+	console.log(`input ${labelTeams}`);
 
 	try {
 		teams = JSON.parse(as);
@@ -35,6 +36,8 @@ const main = async (workspace) => {
 		console.log(`Unable to parse input. error: ${e}`);
 		teams = [];
 	}
+	
+		console.log(`teams ${teams}`);
 
   try {
     const subversions = versionName.split('.');
