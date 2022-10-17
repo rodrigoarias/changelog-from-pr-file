@@ -19,8 +19,7 @@ const features = []
 const fixes = []
 const others = []
 
-//const teams = ['example']
-const teams = []
+var teams;
 const defaultTeam = 'Others'
 
 
@@ -28,6 +27,14 @@ const main = async (workspace) => {
   const myToken = core.getInput('git-token');
   const octokit = github.getOctokit(myToken);
   const versionName = core.getInput('current-version');
+  const labelTeams = core.getInput('label-teams');
+	
+	try {
+		teams = JSON.parse(labelTeams);
+	} catch (e) {
+		console.log(`Unable to parse input. error: ${e}`);
+		teams = [];
+	}
 
   try {
     const subversions = versionName.split('.');

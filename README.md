@@ -22,6 +22,10 @@ This was created for a specific project so it assumes a lot of things:
 
 The name of the version to be updated, in format `major.minor.patch`. Default: `"0.0.0"`
 
+## `label-teams`
+
+A list of "teams" accepted as label names that can be used as subsections (of features, bugs and others sections).
+
 
 ## Outputs
 
@@ -42,5 +46,9 @@ The input version updated by the number and type of changes.
       with:
         git-token: ${{ secrets.RELEASE_GITHUB_KEY }}
         current-version: "1.0.0"
+        label-teams: |
+        ["teamA",
+        "teamB",
+        "teamC"]
       
 ```
