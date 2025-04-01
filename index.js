@@ -43,7 +43,7 @@ const main = async (workspace) => {
     majorVersion = Number(subversions[0]);
     minorVersion = Number(subversions[1]);
     patchVersion = Number(subversions[2]);
-    simplePatchVersion = `${majorVersion}.${minorVersion++}.${0}`
+    simplePatchVersion = `${majorVersion}.${minorVersion + 1}.${0}`
   } catch (error) {
     console.log(`error ${error}`);
   }
