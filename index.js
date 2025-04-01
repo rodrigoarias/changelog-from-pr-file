@@ -5,6 +5,7 @@ var output
 var patchVersion = 0
 var minorVersion = 0
 var majorVersion = 0
+var simplePatchVersion = ''
 
 
 const fixPrefix = "fix:"
@@ -28,6 +29,7 @@ const main = async (workspace) => {
   const octokit = github.getOctokit(myToken);
   const versionName = core.getInput('current-version');
   const labelTeams = core.getInput('label-teams');
+  const incrementPatch = core.getInput('increment-patch') === 'true';
 	
 	try {
 		teams = JSON.parse(labelTeams);
@@ -41,6 +43,7 @@ const main = async (workspace) => {
     majorVersion = Number(subversions[0]);
     minorVersion = Number(subversions[1]);
     patchVersion = Number(subversions[2]);
+    simplePatchVersion = `${majorVersion}.${minorVersion + 1}.${0}`
   } catch (error) {
     console.log(`error ${error}`);
   }
@@ -56,7 +59,11 @@ const main = async (workspace) => {
   createOutputFromChanges();
   console.log(`${output}`)
   core.setOutput("changelog", output);
-  core.setOutput("version", `${majorVersion}.${minorVersion}.${patchVersion}`);
+  if (incrementPatch) {
+    core.setOutput("version", simplePatchVersion);
+  } else {
+    core.setOutput("version", `${majorVersion}.${minorVersion}.${patchVersion}`);
+  }
 }
 
 const createOutputFromChanges = () => {

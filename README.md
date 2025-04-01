@@ -26,6 +26,11 @@ The name of the version to be updated, in format `major.minor.patch`. Default: `
 
 A list of "teams" accepted as label names that can be used as subsections (of features, bugs and others sections).
 
+## `increment-patch`
+
+If increment-patch if true, the version-name output will be equal to "mayor.minor+1.0". If false, it will be calculated with the number of feats and fixes.
+Default: false
+
 
 ## Outputs
 
