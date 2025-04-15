@@ -54,20 +54,23 @@ const main = async (workspace) => {
 
   const changeFiles = await findFile(octokit, owner, repo, '/changes');
 
+  let versionOutput;
+  if (incrementPatch) {
+    versionOutput = simplePatchVersion;
+  } else {
+    versionOutput = `${majorVersion}.${minorVersion}.${patchVersion}`;
+  }
+
   await processAllFiles(changeFiles, octokit, owner, repo, '/changes');
 
-  createOutputFromChanges();
+  createOutputFromChanges(versionOutput);
   console.log(`${output}`)
   core.setOutput("changelog", output);
-  if (incrementPatch) {
-    core.setOutput("version", simplePatchVersion);
-  } else {
-    core.setOutput("version", `${majorVersion}.${minorVersion}.${patchVersion}`);
-  }
+  core.setOutput("version", versionOutput);
 }
 
-const createOutputFromChanges = () => {
-  output = `## v ${majorVersion}.${minorVersion}.${patchVersion}`
+const createOutputFromChanges = (versionOutput) => {
+  output = `## v ${versionOutput}`
   output += "\n"
   output = addSection(output, features, '### 🚀 Features');
   output = addSection(output, fixes, '### 🐛 Bugs');
