@@ -24,19 +24,19 @@ var teams;
 const defaultTeam = 'Others'
 
 
-const main = async (workspace) => {
+const main = async () => {
   const myToken = core.getInput('git-token');
   const octokit = github.getOctokit(myToken);
   const versionName = core.getInput('current-version');
   const labelTeams = core.getInput('label-teams');
   const incrementPatch = core.getInput('increment-patch') === 'true';
-	
-	try {
-		teams = JSON.parse(labelTeams);
-	} catch (e) {
-		console.log(`Unable to parse input. error: ${e}`);
-		teams = [];
-	}
+
+  try {
+    teams = JSON.parse(labelTeams);
+  } catch (e) {
+    console.log(`Unable to parse input. error: ${e}`);
+    teams = [];
+  }
 
   try {
     const subversions = versionName.split('.');
@@ -48,11 +48,37 @@ const main = async (workspace) => {
     console.log(`error ${error}`);
   }
 
-
   const owner = github.context.payload.repository.owner.login
   const repo = github.context.payload.repository.name
 
-  const changeFiles = await findFile(octokit, owner, repo, '/changes');
+  // Get the latest release tag
+  const latestRelease = await getLatestRelease(octokit, owner, repo);
+
+  if (!latestRelease) {
+    console.log('No releases found. Cannot generate changelog.');
+    core.setOutput("changelog", "");
+    core.setOutput("version", versionName);
+    return;
+  }
+
+  // Get commits between latest release and current HEAD
+  const headRef = github.context.sha || 'HEAD';
+  const commits = await getCommitsBetweenRefs(octokit, owner, repo, latestRelease, headRef);
+
+  if (commits.length === 0) {
+    console.log('No new commits since last release.');
+    core.setOutput("changelog", "");
+    core.setOutput("version", versionName);
+    return;
+  }
+
+  // Get PRs from commits (includes labels)
+  const prs = await getPRsFromCommits(octokit, owner, repo, commits);
+
+  // Process each PR
+  for (const pr of prs) {
+    processTypeOfChange(pr);
+  }
 
   let versionOutput;
   if (incrementPatch) {
@@ -60,8 +86,6 @@ const main = async (workspace) => {
   } else {
     versionOutput = `${majorVersion}.${minorVersion}.${patchVersion}`;
   }
-
-  await processAllFiles(changeFiles, octokit, owner, repo, '/changes');
 
   createOutputFromChanges(versionOutput);
   console.log(`${output}`)
@@ -103,26 +127,6 @@ const addSubsection = (output, teamName, items) => {
     output += '\n';
   }
   return output; 
-}
-
-const processAllFiles = async (files, octokit, organization, repo, fileName) => {
-  if (Array.isArray(files)) {
-    for (const element of files) {
-      await lookForPRFile(octokit, organization, repo, element.path)
-    }  
-  } else {
-    console.log('Not a valid directory (folder)')
-  }
-}
- 
-
-const lookForPRFile = async(octokit, organization, repo, fileName) => {
-    const file = await findFile(octokit, organization, repo, fileName)
-    const buff = Buffer.from(file.content, 'base64');
-    const content = buff.toString('ascii');
-    const pr = JSON.parse(content);
-    
-    processTypeOfChange(pr);
 }
 
 const teamLabelIncluded = (pr) => {
@@ -186,21 +190,79 @@ const processChange = (pr, sameLevelChanges, prefix) => {
   sameLevelChanges[team].push(line);
 }
 
-const findFile = async(octokit, organization, repo, fileName, branch) => {
+const getLatestRelease = async (octokit, owner, repo) => {
   try {
-    gitFile = await octokit.rest.repos.getContent({
-      owner: organization,
-      repo: repo,
-      path: fileName,
-    })
-    return gitFile.data;
-  } catch (error) {
-    if (error.status === 404) {
-      console.log(`Path '${fileName}' not found in repository. No changes to process.`);
-      return [];
+    const releases = await octokit.rest.repos.listReleases({
+      owner,
+      repo,
+      per_page: 10
+    });
+
+    // Find the latest non-draft release
+    const publishedRelease = releases.data.find(release => !release.draft);
+
+    if (publishedRelease) {
+      console.log(`Found latest release: ${publishedRelease.tag_name}`);
+      return publishedRelease.tag_name;
     }
-    throw error;
+
+    console.log('No published releases found');
+    return null;
+  } catch (error) {
+    console.log(`Error fetching releases: ${error.message}`);
+    return null;
   }
+}
+
+const getCommitsBetweenRefs = async (octokit, owner, repo, baseRef, headRef) => {
+  try {
+    const comparison = await octokit.rest.repos.compareCommits({
+      owner,
+      repo,
+      base: baseRef,
+      head: headRef
+    });
+
+    console.log(`Found ${comparison.data.commits.length} commits between ${baseRef} and ${headRef}`);
+    return comparison.data.commits;
+  } catch (error) {
+    console.log(`Error comparing commits: ${error.message}`);
+    return [];
+  }
+}
+
+const getPRsFromCommits = async (octokit, owner, repo, commits) => {
+  const prNumbers = new Set();
+  const prs = [];
+
+  for (const commit of commits) {
+    try {
+      const response = await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
+        owner,
+        repo,
+        commit_sha: commit.sha
+      });
+
+      for (const pr of response.data) {
+        // Only include merged PRs and avoid duplicates
+        if (pr.merged_at && !prNumbers.has(pr.number)) {
+          prNumbers.add(pr.number);
+          prs.push({
+            title: pr.title,
+            number: pr.number,
+            url: pr.html_url,
+            labels: pr.labels || []
+          });
+          console.log(`Found PR #${pr.number}: ${pr.title}`);
+        }
+      }
+    } catch (error) {
+      console.log(`Error fetching PRs for commit ${commit.sha}: ${error.message}`);
+    }
+  }
+
+  console.log(`Total unique PRs found: ${prs.length}`);
+  return prs;
 }
 
 main()
