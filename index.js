@@ -194,36 +194,22 @@ const processChange = (pr, sameLevelChanges, prefix) => {
 
 const getLatestRelease = async (octokit, owner, repo) => {
   try {
-    console.log(`Fetching releases for ${owner}/${repo}...`);
-    const releases = await octokit.rest.repos.listReleases({
+    console.log(`Fetching latest release for ${owner}/${repo}...`);
+
+    // Use the dedicated "latest release" endpoint which returns the most recent non-draft, non-prerelease release
+    const response = await octokit.rest.repos.getLatestRelease({
       owner,
-      repo,
-      per_page: 10
+      repo
     });
 
-    console.log(`Found ${releases.data.length} releases`);
-
-    if (releases.data.length > 0) {
-      console.log('Releases found:');
-      releases.data.forEach(r => {
-        console.log(`  - ${r.tag_name} (draft: ${r.draft})`);
-      });
-    }
-
-    // Find the latest non-draft release
-    const publishedRelease = releases.data.find(release => !release.draft);
-
-    if (publishedRelease) {
-      console.log(`Using latest published release: ${publishedRelease.tag_name}`);
-      return publishedRelease.tag_name;
-    }
-
-    console.log('No published (non-draft) releases found');
-    return null;
+    console.log(`Found latest release: ${response.data.tag_name}`);
+    return response.data.tag_name;
   } catch (error) {
-    console.log(`Error fetching releases: ${error.message}`);
-    console.log(`Error status: ${error.status}`);
-    console.log(`Full error: ${JSON.stringify(error)}`);
+    if (error.status === 404) {
+      console.log('No published releases found in this repository');
+    } else {
+      console.log(`Error fetching latest release: ${error.message}`);
+    }
     return null;
   }
 }
