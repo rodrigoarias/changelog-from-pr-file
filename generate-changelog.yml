@@ -1,0 +1,208 @@
+name: Generate Changelog
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: 'Base reference (leave empty to use latest release)'
+        required: false
+        type: string
+      output_file:
+        description: 'Output file path'
+        required: false
+        default: 'CHANGELOG.md'
+        type: string
+  release:
+    types: [created, published]
+
+jobs:
+  generate-changelog:
+    runs-on: ubuntu-latest
+    name: Generate Changelog from PRs
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch all tags and branches
+        run: |
+          git fetch --tags
+          git fetch origin
+          echo "Fetched all tags and branches from remote"
+
+      - name: Get latest release tag
+        id: get_release
+        run: |
+          if [ -n "${{ inputs.base_ref }}" ]; then
+            echo "base_ref=${{ inputs.base_ref }}" >> $GITHUB_OUTPUT
+            echo "Using specified base reference: ${{ inputs.base_ref }}"
+          elif [ "${{ github.event_name }}" = "release" ]; then
+            # Get the previous published release when triggered by a new release
+            LATEST_TAG=$(gh release list --limit 10 --json tagName,isDraft --jq '[.[] | select(.isDraft == false)][1].tagName // "HEAD~100"')
+            echo "base_ref=$LATEST_TAG" >> $GITHUB_OUTPUT
+            echo "Using previous release: $LATEST_TAG"
+          else
+            # Get the latest published (non-draft) release
+            LATEST_TAG=$(gh release list --limit 10 --json tagName,isDraft --jq '[.[] | select(.isDraft == false)][0].tagName // "HEAD~100"')
+            echo "base_ref=$LATEST_TAG" >> $GITHUB_OUTPUT
+            echo "Using latest published release: $LATEST_TAG"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Get current branch or tag
+        id: get_branch
+        run: |
+          if [ "${{ github.event_name }}" = "release" ]; then
+            # Use the release tag name
+            CURRENT_REF="${{ github.event.release.tag_name }}"
+          else
+            # Get the actual branch name from GITHUB_REF
+            BRANCH_NAME=${GITHUB_REF#refs/heads/}
+
+            # Try to use origin/branch if branch doesn't exist locally
+            if git rev-parse --verify "$BRANCH_NAME" >/dev/null 2>&1; then
+              CURRENT_REF="$BRANCH_NAME"
+            elif git rev-parse --verify "origin/$BRANCH_NAME" >/dev/null 2>&1; then
+              CURRENT_REF="origin/$BRANCH_NAME"
+            else
+              # Fall back to HEAD if nothing else works
+              CURRENT_REF="HEAD"
+            fi
+          fi
+          echo "branch_name=$CURRENT_REF" >> $GITHUB_OUTPUT
+          echo "Current reference: $CURRENT_REF"
+
+      - name: Get merged PRs between references
+        id: get_prs
+        run: |
+          BASE_REF="${{ steps.get_release.outputs.base_ref }}"
+          CURRENT_REF="${{ steps.get_branch.outputs.branch_name }}"
+
+          echo "Fetching PRs between $BASE_REF and $CURRENT_REF"
+
+          # Get all merged PRs that have commits in the range
+          # We'll get commits first, then find PRs associated with them
+          git log --format="%H" $BASE_REF..$CURRENT_REF > commits.txt
+
+          echo "Found $(wc -l < commits.txt) commits"
+
+          # Create a file to store unique PR numbers
+          > pr_numbers.txt
+
+          # Try to extract PR numbers from commit messages (format: "Merge pull request #1234")
+          while read -r commit_sha; do
+            # Method 1: Check commit message for PR number
+            PR_NUM=$(git log --format=%s -n 1 $commit_sha | grep -oE '#[0-9]+' | grep -oE '[0-9]+' | head -1)
+
+            # Method 2: Use GitHub API to find PR associated with commit
+            if [ -z "$PR_NUM" ]; then
+              PR_NUM=$(gh api "repos/${{ github.repository }}/commits/$commit_sha/pulls" --jq '.[0].number // empty' 2>/dev/null || echo "")
+            fi
+
+            if [ -n "$PR_NUM" ]; then
+              echo "$PR_NUM" >> pr_numbers.txt
+            fi
+          done < commits.txt
+
+          # Remove duplicates and sort numerically
+          sort -u -n pr_numbers.txt -o pr_numbers.txt
+
+          echo "Found $(wc -l < pr_numbers.txt) unique PRs"
+
+          # Also save for later steps
+          echo "pr_count=$(wc -l < pr_numbers.txt)" >> $GITHUB_OUTPUT
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Generate changelog
+        id: generate
+        run: |
+          OUTPUT_FILE="${{ inputs.output_file }}"
+          BASE_REF="${{ steps.get_release.outputs.base_ref }}"
+          CURRENT_REF="${{ steps.get_branch.outputs.branch_name }}"
+
+          # Create changelog header
+          cat > "$OUTPUT_FILE" << 'HEADER'
+          # Changelog
+
+          HEADER
+
+          echo "## Changes from $BASE_REF to $CURRENT_REF" >> "$OUTPUT_FILE"
+          echo "" >> "$OUTPUT_FILE"
+          echo "Generated on: $(date -u +"%Y-%m-%d %H:%M:%S UTC")" >> "$OUTPUT_FILE"
+          echo "" >> "$OUTPUT_FILE"
+
+          # Get PR details and add to changelog
+          if [ -s pr_numbers.txt ]; then
+            echo "### Pull Requests" >> "$OUTPUT_FILE"
+            echo "" >> "$OUTPUT_FILE"
+
+            # Fetch all PR data at once for efficiency
+            while read -r pr_num; do
+              echo "Fetching details for PR #$pr_num"
+
+              PR_DATA=$(gh pr view "$pr_num" --json number,title,url,mergedAt,labels 2>/dev/null || echo "")
+
+              if [ -n "$PR_DATA" ]; then
+                PR_TITLE=$(echo "$PR_DATA" | jq -r '.title')
+                PR_URL=$(echo "$PR_DATA" | jq -r '.url')
+
+                echo "- $PR_TITLE [PR-$pr_num]($PR_URL)" >> "$OUTPUT_FILE"
+              else
+                echo "- PR #$pr_num (details unavailable)" >> "$OUTPUT_FILE"
+              fi
+            done < pr_numbers.txt
+          else
+            echo "No PRs found between $BASE_REF and $CURRENT_REF" >> "$OUTPUT_FILE"
+          fi
+
+          echo "" >> "$OUTPUT_FILE"
+          echo "---" >> "$OUTPUT_FILE"
+          echo "" >> "$OUTPUT_FILE"
+          echo "**Total PRs:** $(wc -l < pr_numbers.txt)" >> "$OUTPUT_FILE"
+          echo "**Comparison:** [\`$BASE_REF...$CURRENT_REF\`](https://github.com/${{ github.repository }}/compare/$BASE_REF...$CURRENT_REF)" >> "$OUTPUT_FILE"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Upload changelog artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: changelog-${{ github.run_number }}
+          path: ${{ inputs.output_file }}
+          retention-days: 90
+
+      - name: Display changelog summary
+        run: |
+          OUTPUT_FILE="${{ inputs.output_file }}"
+
+          echo "================================"
+          echo "Changelog Generated Successfully"
+          echo "================================"
+          echo ""
+          echo "Base reference: ${{ steps.get_release.outputs.base_ref }}"
+          echo "Current reference: ${{ steps.get_branch.outputs.branch_name }}"
+          echo "Total PRs found: ${{ steps.get_prs.outputs.pr_count }}"
+          echo "Output file: $OUTPUT_FILE"
+          echo ""
+          echo "--- Changelog Preview ---"
+          cat "$OUTPUT_FILE"
+
+      - name: Commit changelog (optional)
+        if: github.event_name == 'release'
+        run: |
+          OUTPUT_FILE="${{ inputs.output_file }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add "$OUTPUT_FILE"
+
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: Update changelog for ${{ steps.get_branch.outputs.branch_name }}"
+            echo "Changelog committed (not pushed - manual push required)"
+          fi
