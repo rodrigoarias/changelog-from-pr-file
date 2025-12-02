@@ -187,12 +187,20 @@ const processChange = (pr, sameLevelChanges, prefix) => {
 }
 
 const findFile = async(octokit, organization, repo, fileName, branch) => {
-  gitFile = await octokit.rest.repos.getContent({
-    owner: organization,
-    repo: repo,
-    path: fileName,
-  })
-  return gitFile.data;
+  try {
+    gitFile = await octokit.rest.repos.getContent({
+      owner: organization,
+      repo: repo,
+      path: fileName,
+    })
+    return gitFile.data;
+  } catch (error) {
+    if (error.status === 404) {
+      console.log(`Path '${fileName}' not found in repository. No changes to process.`);
+      return [];
+    }
+    throw error;
+  }
 }
 
 main()
