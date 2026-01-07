@@ -1,49 +1,79 @@
 const core = require('@actions/core')
 const github = require('@actions/github')
-var output
 
-var patchVersion = 0
-var minorVersion = 0
-var majorVersion = 0
-var simplePatchVersion = ''
+const PREFIXES = {
+  added: "added:",
+  changed: "changed:",
+  deprecated: "deprecated:",
+  removed: "removed:",
+  fixed: "fixed:",
+  security: "security:"
+}
 
+const SECTIONS = {
+  added: '### ✨ Added',
+  changed: '### 🔄 Changed',
+  deprecated: '### ⚠️ Deprecated',
+  removed: '### 🗑️ Removed',
+  fixed: '### 🐛 Fixed',
+  security: '### 🔒 Security'
+}
 
-const fixPrefix = "fix:"
-const featPrefix = "feat:"
-const chorePrefix = "chore:"
-const docsPrefix = "docs:"
-const refactorPrefix = "refactor:"
-const stylePrefix = "style:"
-const testPrefix = "test:"
+const generateChangelog = (prs, version) => {
+  const categories = {
+    added: [],
+    changed: [],
+    deprecated: [],
+    removed: [],
+    fixed: [],
+    security: []
+  }
 
-const features = []
-const fixes = []
-const others = []
+  for (const pr of prs) {
+    const lowerTitle = pr.title.toLowerCase();
+    let category = 'changed';
+    let prefixLength = 0;
 
-var teams;
-const defaultTeam = 'Others'
+    for (const [key, prefix] of Object.entries(PREFIXES)) {
+      if (lowerTitle.startsWith(prefix)) {
+        category = key;
+        prefixLength = prefix.length;
+        break;
+      }
+    }
 
+    const line = pr.title.substring(prefixLength).trim() +
+      ` [PR-${pr.number}](${pr.url})`;
+    categories[category].push(line);
+  }
+
+  let output = `## v ${version}\n`;
+
+  for (const [key, title] of Object.entries(SECTIONS)) {
+    if (categories[key].length > 0) {
+      output += title + '\n';
+      for (const line of categories[key]) {
+        output += '- ' + line.trim() + '\n';
+      }
+    }
+  }
+
+  return output;
+}
 
 const main = async () => {
   const myToken = core.getInput('git-token');
   const octokit = github.getOctokit(myToken);
   const versionName = core.getInput('current-version');
-  const labelTeams = core.getInput('label-teams');
   const incrementPatch = core.getInput('increment-patch') === 'true';
 
-  try {
-    teams = JSON.parse(labelTeams);
-  } catch (e) {
-    console.log(`Unable to parse input. error: ${e}`);
-    teams = [];
-  }
+  let majorVersion = 0, minorVersion = 0, patchVersion = 0;
 
   try {
     const subversions = versionName.split('.');
     majorVersion = Number(subversions[0]);
     minorVersion = Number(subversions[1]);
     patchVersion = Number(subversions[2]);
-    simplePatchVersion = `${majorVersion}.${minorVersion + 1}.${0}`
   } catch (error) {
     console.log(`error ${error}`);
   }
@@ -53,7 +83,6 @@ const main = async () => {
 
   console.log(`Repository: ${owner}/${repo}`);
 
-  // Get the latest release tag
   const latestRelease = await getLatestRelease(octokit, owner, repo);
 
   if (!latestRelease) {
@@ -63,7 +92,6 @@ const main = async () => {
     return;
   }
 
-  // Get commits between latest release and current HEAD
   const headRef = github.context.sha || 'HEAD';
   const commits = await getCommitsBetweenRefs(octokit, owner, repo, latestRelease, headRef);
 
@@ -74,134 +102,22 @@ const main = async () => {
     return;
   }
 
-  // Get PRs from commits (includes labels)
   const prs = await getPRsFromCommits(octokit, owner, repo, commits);
 
-  // Process each PR
-  for (const pr of prs) {
-    processTypeOfChange(pr);
-  }
+  const versionOutput = incrementPatch
+    ? `${majorVersion}.${minorVersion + 1}.0`
+    : `${majorVersion}.${minorVersion}.${patchVersion}`;
 
-  let versionOutput;
-  if (incrementPatch) {
-    versionOutput = simplePatchVersion;
-  } else {
-    versionOutput = `${majorVersion}.${minorVersion}.${patchVersion}`;
-  }
-
-  createOutputFromChanges(versionOutput);
-  console.log(`${output}`)
-  core.setOutput("changelog", output);
+  const changelog = generateChangelog(prs, versionOutput);
+  console.log(changelog);
+  core.setOutput("changelog", changelog);
   core.setOutput("version", versionOutput);
-}
-
-const createOutputFromChanges = (versionOutput) => {
-  output = `## v ${versionOutput}`
-  output += "\n"
-  output = addSection(output, features, '### 🚀 Features');
-  output = addSection(output, fixes, '### 🐛 Bugs');
-  output = addSection(output, others, '### 📝 Others');
-  return output;
-}
-
-const addSection = (output, changes, title) => {
-  if (Object.entries(changes).length === 0) {
-    return output;
-  }
-
-  output += title;
-  output += '\n';
-
-  for (const [teamName,items] of Object.entries(changes)) {
-    output = addSubsection(output, teamName, items);
-  }
-
-  return output;
-}
-
-const addSubsection = (output, teamName, items) => {
-  if (teams.length > 0) {
-    output += '##### ' + teamName + '\n';  
-  }
-  
-  for (const log of items) {
-    output += '- ' + log.trim();
-    output += '\n';
-  }
-  return output; 
-}
-
-const teamLabelIncluded = (pr) => {
-  if (pr.labels.length > 0) {
-    return pr.labels.map(label => label.name).find(labelName => teams.includes(labelName))
-  }
-  return false;
-}
-
-const processTypeOfChange = (pr) => {
-  const changeMessage = pr.title;
-  const prefix = ''
-
-  switch (true) {
-  case changeMessage.startsWith(chorePrefix):
-    processChange(pr, others, chorePrefix);
-    break;
-  case changeMessage.startsWith(docsPrefix):
-    processChange(pr, others, docsPrefix);
-    break;
-  case changeMessage.startsWith(stylePrefix):
-    processChange(pr, others, stylePrefix);
-    break;
-  case changeMessage.startsWith(testPrefix):
-    processChange(pr, others, testPrefix);
-    break;
-
-  case changeMessage.startsWith(featPrefix):
-    processChange(pr, features, featPrefix);
-    patchVersion = 0;
-    minorVersion++;
-    break;
-    
-  case changeMessage.startsWith(refactorPrefix):
-    processChange(pr, fixes, refactorPrefix);
-    patchVersion++;
-    break;
-
-  case changeMessage.startsWith(fixPrefix):
-    processChange(pr, fixes, fixPrefix);
-    patchVersion++;
-    break;
-
-  default:
-    processChange(pr, fixes, '');
-    patchVersion++;
-    break;
-  }
-}
-
-const processChange = (pr, sameLevelChanges, prefix) => {
-  var line = pr.title.replace(prefix, '')
-  line += " " + "[PR-" + pr.number + "](" + pr.url + ")";
-  var team = teamLabelIncluded(pr);
-  team = team ? team : defaultTeam;
-
-  if (!sameLevelChanges[team]) {
-    sameLevelChanges[team] = []
-  }
-
-  sameLevelChanges[team].push(line);
 }
 
 const getLatestRelease = async (octokit, owner, repo) => {
   try {
     console.log(`Fetching latest release for ${owner}/${repo}...`);
-
-    // Use the dedicated "latest release" endpoint which returns the most recent non-draft, non-prerelease release
-    const response = await octokit.rest.repos.getLatestRelease({
-      owner,
-      repo
-    });
-
+    const response = await octokit.rest.repos.getLatestRelease({ owner, repo });
     console.log(`Found latest release: ${response.data.tag_name}`);
     return response.data.tag_name;
   } catch (error) {
@@ -217,12 +133,8 @@ const getLatestRelease = async (octokit, owner, repo) => {
 const getCommitsBetweenRefs = async (octokit, owner, repo, baseRef, headRef) => {
   try {
     const comparison = await octokit.rest.repos.compareCommits({
-      owner,
-      repo,
-      base: baseRef,
-      head: headRef
+      owner, repo, base: baseRef, head: headRef
     });
-
     console.log(`Found ${comparison.data.commits.length} commits between ${baseRef} and ${headRef}`);
     return comparison.data.commits;
   } catch (error) {
@@ -238,13 +150,10 @@ const getPRsFromCommits = async (octokit, owner, repo, commits) => {
   for (const commit of commits) {
     try {
       const response = await octokit.rest.repos.listPullRequestsAssociatedWithCommit({
-        owner,
-        repo,
-        commit_sha: commit.sha
+        owner, repo, commit_sha: commit.sha
       });
 
       for (const pr of response.data) {
-        // Only include merged PRs and avoid duplicates
         if (pr.merged_at && !prNumbers.has(pr.number)) {
           prNumbers.add(pr.number);
           prs.push({
@@ -265,4 +174,9 @@ const getPRsFromCommits = async (octokit, owner, repo, commits) => {
   return prs;
 }
 
-main()
+// Only run main when executed directly (not when imported)
+if (require.main === module) {
+  main();
+}
+
+module.exports = { generateChangelog, PREFIXES, SECTIONS };
